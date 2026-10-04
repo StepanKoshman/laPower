@@ -1,0 +1,1049 @@
+/*
+ * 组件皮肤（历史文件，逐步瘦身中）：自定义下拉 / 输入框 / 复选框 / 读数卡片 /
+ * 图表容器 / 时间线滑块 / 状态指示点。
+ * 设计令牌见 styles/tokens.css；外壳布局见 styles/app.css；弹层原语见 styles/components.css。
+ */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background-color: var(--surface-content);
+}
+
+body {
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* WebKitGTK (Linux) paints native <select> with the GTK theme and ignores our
+   background/color, so the control comes out white. Drop the native appearance
+   and draw the arrow ourselves. Note: any rule below must use `background-color`
+   rather than the `background` shorthand, or it wipes out the arrow image. */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("assets/select-arrow-dark.svg"); /* grey-84 */
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  background-size: 10px 6px;
+  background-color: var(--fill-control);
+  color: var(--text-primary);
+}
+
+:root[data-theme="light"] select {
+  background-image: url("assets/select-arrow-light.svg"); /* grey-26 */
+}
+
+.ribbon-select {
+  padding: 4px 20px 4px 8px;
+  background-color: var(--fill-control);
+  border: 1px solid var(--stroke-control);
+  border-bottom-color: var(--stroke-input-underline);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  min-width: 100px;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.ribbon-select:hover:not(:disabled) {
+  background-color: var(--fill-control-hover);
+}
+
+.ribbon-select:focus {
+  outline: none;
+  box-shadow: inset 0 -2px 0 var(--accent-fill);
+}
+
+.ribbon-select:disabled {
+  color: var(--text-disabled);
+  border-bottom-color: var(--stroke-control);
+  cursor: not-allowed;
+}
+
+.ribbon-select option {
+  background-color: var(--surface-flyout);
+  color: var(--text-primary);
+}
+
+.device-dropdown {
+  min-width: 200px;
+  max-width: 280px;
+}
+
+/* ── 复选框（flyout / PD 命令栏共用） ─────────────────────────── */
+
+.ribbon-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: transparent;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-primary);
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.ribbon-checkbox:hover {
+  background: var(--fill-subtle-hover);
+}
+
+.ribbon-checkbox input {
+  display: none;
+}
+
+.ribbon-checkbox .checkmark {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--stroke-input-underline);
+  border-radius: 3px;
+  position: relative;
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.ribbon-checkbox .checkmark.voltage {
+  border-color: var(--ch-voltage);
+}
+.ribbon-checkbox .checkmark.current {
+  border-color: var(--ch-current);
+}
+.ribbon-checkbox .checkmark.power {
+  border-color: var(--ch-power);
+}
+.ribbon-checkbox .checkmark.temp {
+  border-color: var(--ch-temp);
+}
+.ribbon-checkbox .checkmark.dpdn {
+  border-color: var(--ch-dp);
+}
+.ribbon-checkbox .checkmark.cc {
+  border-color: var(--ch-cc1);
+}
+
+.ribbon-checkbox input:checked + .checkmark {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+}
+
+.ribbon-checkbox input:checked + .checkmark::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 3px;
+  height: 7px;
+  border: solid var(--text-on-accent);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.ribbon-checkbox input:checked + .checkmark.voltage {
+  background: var(--ch-voltage);
+  border-color: var(--ch-voltage);
+}
+.ribbon-checkbox input:checked + .checkmark.current {
+  background: var(--ch-current);
+  border-color: var(--ch-current);
+}
+.ribbon-checkbox input:checked + .checkmark.power {
+  background: var(--ch-power);
+  border-color: var(--ch-power);
+}
+.ribbon-checkbox input:checked + .checkmark.temp {
+  background: var(--ch-temp);
+  border-color: var(--ch-temp);
+}
+.ribbon-checkbox input:checked + .checkmark.dpdn {
+  background: var(--ch-dp);
+  border-color: var(--ch-dp);
+}
+.ribbon-checkbox input:checked + .checkmark.cc {
+  background: var(--ch-cc1);
+  border-color: var(--ch-cc1);
+}
+
+/* ── 输入框 ───────────────────────────────────────────────────── */
+
+.ribbon-input {
+  padding: 4px 6px;
+  background: var(--fill-control);
+  border: 1px solid var(--stroke-control);
+  border-bottom-color: var(--stroke-input-underline);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  width: 80px;
+  height: 24px; /* Fixed height for alignment */
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+/* Hide spin buttons for number inputs with class .no-spin */
+.ribbon-input.no-spin::-webkit-outer-spin-button,
+.ribbon-input.no-spin::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.ribbon-input.no-spin {
+  -moz-appearance: textfield; /* Firefox */
+}
+
+.ribbon-input:hover:not(:disabled):not([readonly]) {
+  background: var(--fill-control-hover);
+}
+
+.ribbon-input:focus {
+  outline: none;
+  box-shadow: inset 0 -2px 0 var(--accent-fill);
+}
+
+.ribbon-input[readonly] {
+  background: transparent;
+  border-color: var(--stroke-control);
+  color: var(--text-secondary);
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1;
+  cursor: pointer;
+  margin-left: 4px;
+  height: 100%;
+  transform: scale(1.1);
+  transform-origin: right center;
+}
+
+/* ── 时间线导航器 ─────────────────────────────────────────────── */
+
+.timeline-container {
+  height: var(--timeline-height);
+  flex-shrink: 0; /* 纵向紧张时不再被静默压扁；预算由 H1 纵向紧凑档保证 */
+  background: var(--surface-card);
+  border: 1px solid var(--stroke-card);
+  border-radius: var(--radius-surface);
+  box-shadow: var(--shadow-2);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.timeline-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.timeline-track {
+  position: relative;
+  flex: 1;
+  background: var(--surface-base);
+  border-radius: var(--radius-control);
+  /* 圆拇指要溢出轨道，裁切只留给图表层 */
+  overflow: visible;
+}
+
+#navigator-chart {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  overflow: hidden;
+  border-radius: var(--radius-control);
+}
+
+.dual-slider-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  z-index: 1;
+}
+
+.dual-slider-container.disabled {
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.dual-slider-container.disabled .range-handle {
+  cursor: not-allowed;
+}
+
+.dual-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+  background: none;
+  margin: 0;
+  z-index: 3;
+}
+
+.dual-slider::-webkit-slider-thumb {
+  pointer-events: none;
+  -webkit-appearance: none;
+  width: 1px;
+  height: 100%;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  margin-top: 0;
+  border-radius: 0;
+}
+
+.dual-slider::-webkit-slider-thumb:hover {
+  background: transparent;
+  transform: none;
+}
+
+.range-handle {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 20px;
+  transform: translateX(-50%);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  cursor: ew-resize;
+  z-index: 4;
+}
+
+.range-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--accent-fill);
+  border-radius: 1px;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.range-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+  background: var(--fill-control);
+  border: 1px solid var(--stroke-card);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-2);
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
+}
+
+.range-handle:hover::before {
+  background: var(--accent-fill-hover);
+}
+
+.range-handle:hover::after {
+  background: var(--fill-control-hover);
+  border-color: var(--accent-stroke);
+}
+
+.range-handle:active::after {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+}
+
+.slider-track-fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: var(--accent-fill-faint);
+  border-left: 1px solid var(--stroke-input-underline);
+  border-right: 1px solid var(--stroke-input-underline);
+  transform: none;
+  border-radius: var(--radius-control);
+  opacity: 1;
+  z-index: 2;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  touch-action: none;
+}
+
+.slider-track-fill.is-pannable {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.slider-track-fill.is-panning {
+  cursor: grabbing;
+}
+
+/* ── 监控视图布局件 ───────────────────────────────────────────── */
+
+.chart-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--monitor-gutter);
+  overflow: hidden;
+  min-width: 0; /* Prevent flex item from overflowing */
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-full);
+  background: var(--status-danger);
+  box-shadow: 0 0 8px var(--status-danger-bg);
+  transition:
+    background var(--dur-slow) var(--ease-standard),
+    box-shadow var(--dur-slow) var(--ease-standard);
+  flex-shrink: 0;
+}
+
+.status-indicator.connected {
+  background: var(--status-success);
+  box-shadow: 0 0 8px var(--status-success-bg);
+}
+
+/* ── 实时读数栏 ───────────────────────────────────────────────── */
+
+.stats-snapshot-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  flex: 0 0 auto;
+}
+
+.realtime-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: var(--panel-realtime-width);
+  flex-shrink: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--surface-card);
+  border: 1px solid var(--stroke-card);
+  border-radius: var(--radius-surface);
+  box-shadow: var(--shadow-2);
+  padding: 0;
+}
+
+.realtime-card {
+  background: transparent;
+  border-radius: 0;
+  padding: 6px 10px 6px 8px;
+  text-align: left;
+  border: none;
+  border-bottom: 1px solid var(--stroke-divider);
+  transition: background var(--dur-fast) var(--ease-standard);
+  position: relative;
+  overflow: hidden;
+  /* overflow:hidden 会把 flex 自动最小尺寸归零——若不禁止收缩，面板高度不足时
+     （温度卡显示后总高超出）flexbox 会先压扁卡片裁掉数值，轮不到面板滚动 */
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  letter-spacing: 0;
+}
+
+.realtime-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.realtime-card.voltage .realtime-body,
+.realtime-card.current .realtime-body,
+.realtime-card.power .realtime-body,
+.realtime-card.temperature .realtime-body {
+  gap: 4px;
+}
+
+.realtime-card.voltage .realtime-content,
+.realtime-card.current .realtime-content,
+.realtime-card.power .realtime-content,
+.realtime-card.temperature .realtime-content {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  justify-content: stretch;
+  align-items: center;
+  column-gap: 4px;
+  padding: 4px 10px;
+  overflow: hidden;
+  border-radius: var(--radius-surface);
+  isolation: isolate;
+}
+
+.realtime-card.voltage .realtime-content {
+  background: var(--ch-voltage-card);
+}
+.realtime-card.current .realtime-content {
+  background: var(--ch-current-card);
+}
+.realtime-card.power .realtime-content {
+  background: var(--ch-power-card);
+}
+.realtime-card.temperature .realtime-content {
+  background: var(--ch-temp-card);
+}
+
+.level-bar {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.level-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent calc(25% - 1px),
+    color-mix(in srgb, var(--stroke-control) 55%, transparent) calc(25% - 1px),
+    color-mix(in srgb, var(--stroke-control) 55%, transparent) 25%
+  );
+}
+
+.level-bar-fill {
+  position: absolute;
+  inset: 0;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.realtime-card.voltage .level-bar-fill {
+  background: var(--ch-voltage-meter);
+}
+.realtime-card.current .level-bar-fill {
+  background: var(--ch-current-meter);
+}
+.realtime-card.power .level-bar-fill {
+  background: var(--ch-power-meter);
+}
+.realtime-card.temperature .level-bar-fill {
+  background: var(--ch-temp-meter);
+}
+
+.realtime-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex: none;
+  background: var(--text-tertiary);
+}
+
+.realtime-card.voltage .realtime-dot {
+  background: var(--ch-voltage);
+}
+.realtime-card.current .realtime-dot {
+  background: var(--ch-current);
+}
+.realtime-card.power .realtime-dot {
+  background: var(--ch-power);
+}
+.realtime-card.temperature .realtime-dot {
+  background: var(--ch-temp);
+}
+
+.mini-bar {
+  display: block;
+  height: 3px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: var(--fill-recess);
+  overflow: hidden;
+}
+
+.mini-bar-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.mini-bar-fill.energy {
+  background: var(--ch-energy);
+}
+.mini-bar-fill.dp {
+  background: var(--ch-dp);
+}
+.mini-bar-fill.dn {
+  background: var(--ch-dn);
+}
+.mini-bar-fill.cc1 {
+  background: var(--ch-cc1);
+}
+.mini-bar-fill.cc2 {
+  background: var(--ch-cc2);
+}
+
+.realtime-card:hover {
+  background: var(--fill-subtle-hover);
+}
+
+.realtime-label {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: 0.4px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.realtime-content {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  padding: 0;
+  line-height: 1;
+}
+
+.realtime-card.voltage .realtime-value,
+.realtime-card.current .realtime-value,
+.realtime-card.power .realtime-value,
+.realtime-card.temperature .realtime-value {
+  position: relative;
+  z-index: 1;
+  grid-column: 2;
+  min-width: 0;
+  text-align: center;
+  color: color-mix(in srgb, var(--text-primary) 82%, transparent);
+}
+
+.realtime-card.voltage .realtime-unit,
+.realtime-card.current .realtime-unit,
+.realtime-card.power .realtime-unit,
+.realtime-card.temperature .realtime-unit {
+  position: relative;
+  z-index: 1;
+  grid-column: 3;
+  margin-left: 0;
+}
+
+.realtime-direction {
+  position: relative;
+  z-index: 1;
+  grid-column: 1;
+  font-size: 18px;
+  color: var(--text-secondary);
+  margin-right: 0;
+}
+
+.realtime-value {
+  font: var(--rt-numeral);
+  text-align: left;
+  white-space: nowrap;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.realtime-card.energy .realtime-value {
+  color: var(--ch-energy);
+}
+
+.realtime-unit {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  margin-left: 4px;
+}
+
+/* 最小 / 平均 / 最大三列：短数字与长数字共用等宽，避免全部左对齐把间距挤乱 */
+.realtime-stats {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 4px;
+  width: 100%;
+  font-size: 11px;
+  line-height: 1.25;
+  letter-spacing: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 2px;
+  padding-top: 3px;
+  border-top: 1px solid var(--stroke-divider);
+}
+
+.realtime-stats > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.realtime-stats > span:nth-child(1) {
+  align-items: flex-start;
+  text-align: left;
+}
+
+.realtime-stats > span:nth-child(2) {
+  align-items: center;
+  text-align: center;
+}
+
+.realtime-stats > span:nth-child(3) {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.stat-k {
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  letter-spacing: 0.2px;
+}
+
+.realtime-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.realtime-card.energy .realtime-label {
+  font-size: 13px;
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.realtime-card.energy .realtime-content {
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.realtime-card.energy .realtime-value {
+  font: 700 18px / 20px var(--font-mono);
+  text-align: left;
+}
+
+.realtime-card.energy .realtime-unit {
+  font-size: 13px;
+}
+
+.realtime-metric + .realtime-metric {
+  margin-top: 2px;
+}
+
+.realtime-stats > span > span:not(.stat-k) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+#data-count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 信号线读数（D+/D-/CC1/CC2） ─────────────────────────────── */
+
+.signal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 12px;
+  padding: 0;
+}
+
+.signal-cell {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: 4px 4px;
+  font-size: 13px;
+  line-height: 1.25;
+  letter-spacing: 0.25px;
+  min-width: 0;
+}
+
+.signal-cell .mini-bar {
+  grid-column: 1 / -1;
+}
+
+.signal-name {
+  font-weight: 600;
+}
+.signal-name.dp {
+  color: var(--ch-dp);
+}
+.signal-name.dn {
+  color: var(--ch-dn);
+}
+.signal-name.cc1 {
+  color: var(--ch-cc1);
+}
+.signal-name.cc2 {
+  color: var(--ch-cc2);
+}
+
+.signal-value {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.signal-unit {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* ── 图表容器 ─────────────────────────────────────────────────── */
+
+.chart-container {
+  flex: 1;
+  background: var(--surface-card);
+  border-radius: var(--radius-surface);
+  padding: var(--chart-pad);
+  border: 1px solid var(--stroke-card);
+  box-shadow: var(--shadow-2);
+  position: relative;
+  min-height: var(--chart-min-height);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#main-chart {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  position: relative;
+}
+
+#main-chart canvas,
+#navigator-chart canvas {
+  contain: strict;
+  transform: translateZ(0);
+}
+
+/* ── Chart legend (top, only visible series) ── */
+.chart-legend {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  min-height: 16px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.chart-legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  flex: none;
+}
+
+/* ── Hover tooltip ── */
+.chart-tooltip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 20;
+  pointer-events: none;
+  background: var(--surface-flyout);
+  border: 1px solid var(--stroke-card);
+  border-radius: var(--radius-surface);
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  box-shadow: var(--shadow-8);
+}
+
+.chart-tooltip-title {
+  color: var(--text-primary);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.6;
+}
+
+.chart-tooltip-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+/* ── uPlot overrides ── */
+.uplot {
+  font-family: var(--font-ui);
+}
+
+.u-cursor-x {
+  border-right: 1px dashed color-mix(in srgb, var(--chart-axis-text) 45%, transparent);
+}
+
+/* Custom Select (src/dropdown.js) — replaces the native <select> popup, which
+   WebKitGTK renders as an unstylable native GTK widget (always light). The
+   native <select> stays in the DOM as the source of truth, visually hidden. */
+.cs {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.cs-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  clip-path: inset(50%);
+}
+
+/* Inherits .ribbon-select etc. from the original select, so the closed control
+   looks identical; only the arrow spacing needs undoing (it is a real element
+   here, not a background-image). */
+.cs-button {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding-right: 8px;
+  font-family: inherit;
+  text-align: left;
+}
+
+.cs-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-arrow {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-top: 5px solid var(--text-secondary);
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+}
+
+.cs-menu {
+  position: fixed;
+  /* 高于 .flyout-panel(1500)：flyout 内的下拉展开时菜单必须浮在面板之上 */
+  z-index: 2000;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 4px;
+  background-color: var(--surface-flyout);
+  border: 1px solid var(--stroke-card);
+  border-radius: var(--radius-surface);
+  box-shadow: var(--shadow-16);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+/* Win11 组合框选项：圆角项 + 选中项左侧 accent 指示条 */
+.cs-option {
+  position: relative;
+  padding: 5px 10px;
+  border-radius: var(--radius-control);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cs-option.is-selected {
+  background-color: var(--fill-subtle-hover);
+}
+
+.cs-option.is-selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  background: var(--accent-fill);
+}
+
+.cs-option.is-active {
+  background-color: var(--fill-subtle-hover);
+}
+
+.cs-option[aria-disabled="true"] {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}

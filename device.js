@@ -1,0 +1,295 @@
+// @ts-check
+/**
+ * @file HID Device枚举、Connect、Disconnect。
+ */
+
+import { refreshRecordButton, stopRecording } from './data.js';
+import { deviceStream } from './device-stream.js';
+import { registerListeners } from './event-listeners.js';
+import { cancelPdExport } from './pd-export.js';
+import { performanceDiagnostics } from './performance-diagnostics.js';
+import { finalizeSpool } from './recording-spool.js';
+import { state } from './state.js';
+import { resetTempForDevice } from './temperature.js';
+import { toast } from './ui/toast.js';
+
+const { invoke } = window.__TAURI__.core;
+
+/** @type {Promise<() => void>|null} */
+let streamInitialization = null;
+let connectionReady = false;
+
+/** Enable connecting only after all acquisition and protocol listeners are registered. @param {boolean} ready */
+export function setConnectionReady(ready) {
+  connectionReady = ready;
+  const button = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-connect'));
+  if (button) {
+    button.disabled = !ready;
+    button.title = ready ? (state.isConnected ? 'DisconnectConnect' : 'ConnectDevice') : 'Device event listener not ready yet';
+    button.setAttribute('aria-label', button.title);
+  }
+}
+
+/** Call once at app startup, before a device can connect. PD listeners remain in app.js. */
+export function initializeDeviceStream() {
+  if (streamInitialization) return streamInitialization;
+  performanceDiagnostics.start();
+  deviceStream.configure({
+    onEnd: () => setConnected(false),
+    onError: (error) => {
+      // 三个 onError 调用点都是终态：流已经不会再有数据了。
+      // 只停记录不改Connect状态的话，底栏会永远停在「已Connect」盖着一条死流。
+      // setConnected(false) 内部已含 stopRecording 与广播，这里不再单独停。
+      setConnected(false);
+      toast.error(`采集已Stop: ${error.error}`);
+    },
+  });
+  deviceStream.enable();
+  // 诊断数据必须来自Apply自己的采集状态，而不是人工转述，便于核心录制与数据完整性测试复用。
+  // 的回执里那两个 declared 字段就是从这里的返回值读的。只读，不影响采集路径。
+  window.__WITRN_STREAM__ = () => deviceStream.diagnostics();
+  window.__WITRN_PERF__ = () => performanceDiagnostics.snapshot();
+  window.__WITRN_PERF_RESET__ = () => performanceDiagnostics.reset();
+  streamInitialization = (async () => {
+    const { listen } = window.__TAURI__.event;
+    try {
+      const release = await registerListeners([
+        listen('device-stream-open', (event) => deviceStream.open(event.payload)),
+        listen('device-data-batch', (event) => deviceStream.handleBatch(event.payload)),
+        listen('stream-error', (event) => deviceStream.handleError(event.payload)),
+        listen('device-stream-end', (event) => deviceStream.handleEnd(event.payload)),
+      ]);
+      return () => {
+        release();
+        streamInitialization = null;
+      };
+    } catch (error) {
+      streamInitialization = null;
+      throw error;
+    }
+  })();
+  return streamInitialization;
+}
+
+/** 落盘收尾的时限：写完尾部、回写表头；超时不阻止退出，文件已按秒同步过。 */
+const SPOOL_EXIT_TIMEOUT_MS = 3000;
+
+/** Replaces app.js invoke('shutdown'); rejects rather than destroy with a missing tail. */
+export async function shutdownDeviceStream() {
+  await cancelPdExport();
+  await initializeDeviceStream();
+  // 末包排空之后再收尾落盘：退出前最后一批点也要进文件。
+  await deviceStream.shutdown(() =>
+    Promise.race([finalizeSpool(), new Promise((resolve) => setTimeout(resolve, SPOOL_EXIT_TIMEOUT_MS))]),
+  );
+}
+
+/** @param {string} id @param {string} value */
+function setDeviceField(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+/** Settings页「Device」说明随Device家族变化。 @param {string|undefined} family */
+function setDeviceNote(family) {
+  setDeviceField(
+    'device-note',
+    family === 'km003c'
+      ? 'USB 枚举得到的厂商 ID、产品 ID 与序列号。POWER-Z 经 Vendor Bulk 接口（Windows 下为 WinUSB）采集，Protocol控制走同一Device的虚拟串口。'
+      : 'VID, PID, and USB SN obtained via HID enumeration. WITRN SN is usually the batch date.',
+  );
+}
+
+/** 下拉框选中项或Connect状态变了：Protocol控制 Tab 等依赖Device家族的界面据此刷新。 */
+function announceDeviceSelection() {
+  document.dispatchEvent?.(new CustomEvent('witrn:device-selection'));
+}
+
+// ─── Device enumeration ──────────────────────────────────────────────────────
+
+/**
+ * 枚举所有已知 HID Device并更新下拉列表。
+ * @returns {Promise<import('./state.js').DeviceInfo[]>}
+ */
+export async function refreshDeviceList() {
+  try {
+    state.deviceList = await invoke('enumerate_devices');
+    const select = /** @type {HTMLSelectElement} */ (document.getElementById('device-select'));
+
+    select.innerHTML = '';
+
+    const previousPath = state.selectedDevicePath;
+
+    if (state.deviceList.length === 0) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = '-- 未检测到Device --';
+      select.appendChild(option);
+      state.selectedDevicePath = null;
+      announceDeviceSelection();
+    } else {
+      state.deviceList.forEach((device) => {
+        const option = document.createElement('option');
+        option.value = device.path;
+        option.textContent = device.display_name;
+        option.dataset.vid = String(device.vid);
+        option.dataset.pid = String(device.pid);
+        option.dataset.sn = device.serial_number || '';
+        option.dataset.model = device.model_name;
+        option.dataset.family = device.family ?? 'witrn';
+        select.appendChild(option);
+      });
+
+      const keepIndex = previousPath ? state.deviceList.findIndex((d) => d.path === previousPath) : -1;
+      select.selectedIndex = keepIndex >= 0 ? keepIndex : 0;
+      onDeviceSelect();
+    }
+
+    return state.deviceList;
+  } catch (e) {
+    console.error('枚举Device失败:', e);
+    const select = /** @type {HTMLSelectElement} */ (document.getElementById('device-select'));
+    select.innerHTML = '<option value="">-- 枚举Device失败 --</option>';
+    return [];
+  }
+}
+
+// ─── Device selection ────────────────────────────────────────────────────────
+
+/** 处理Device下拉框选中变化。 */
+export function onDeviceSelect() {
+  const select = /** @type {HTMLSelectElement} */ (document.getElementById('device-select'));
+  const selectedOption = select.options[select.selectedIndex];
+
+  if (selectedOption?.value) {
+    state.selectedDevicePath = selectedOption.value;
+    const vid = selectedOption.dataset.vid || '0';
+    const pid = selectedOption.dataset.pid || '0';
+    const sn = selectedOption.dataset.sn || '--';
+
+    setDeviceField('device-vid', `0x${Number(vid).toString(16).toUpperCase().padStart(4, '0')}`);
+    setDeviceField('device-pid', `0x${Number(pid).toString(16).toUpperCase().padStart(4, '0')}`);
+    setDeviceField('device-sn', sn || '--');
+    setDeviceNote(selectedOption.dataset.family);
+  } else {
+    state.selectedDevicePath = null;
+    setDeviceField('device-vid', '--');
+    setDeviceField('device-pid', '--');
+    setDeviceField('device-sn', '--');
+    setDeviceNote(undefined);
+  }
+  announceDeviceSelection();
+}
+
+// ─── Connect / Disconnect ────────────────────────────────────────────────────
+
+/** @type {boolean} */
+let connecting = false;
+
+/** Connect到当前选中的Device。 */
+export async function connectDevice() {
+  if (connecting || !connectionReady) return;
+  try {
+    if (!state.selectedDevicePath) {
+      toast.warning('请先选择一个Device');
+      return;
+    }
+    connecting = true;
+    await initializeDeviceStream();
+    if (deviceStream.generation) await deviceStream.drain();
+    const stream = await invoke('connect_device_by_path', { path: state.selectedDevicePath });
+    deviceStream.open(stream);
+
+    // 获取Connect后的Device信息
+    const deviceInfo = await invoke('get_current_device_info');
+    state.connectedDevice = /** @type {import('./state.js').DeviceInfo|null} */ (deviceInfo ?? null);
+    if (deviceInfo) {
+      const di = /** @type {import('./state.js').DeviceInfo} */ (deviceInfo);
+      setDeviceField('device-vid', `0x${di.vid.toString(16).toUpperCase().padStart(4, '0')}`);
+      setDeviceField('device-pid', `0x${di.pid.toString(16).toUpperCase().padStart(4, '0')}`);
+      setDeviceField('device-sn', di.serial_number || '--');
+      setDeviceNote(di.family);
+    }
+
+    if (deviceStream.ended) throw new Error('Device已在Connect过程中Disconnect');
+    setConnected(true);
+
+    try {
+      await invoke('set_sample_rate', { rate: state.settings.sampleRate, generation: deviceStream.generation });
+    } catch (err) {
+      console.error('Failed to apply sample rate on connect:', err);
+    }
+  } catch (e) {
+    toast.error(`Connect失败: ${e}`);
+  } finally {
+    connecting = false;
+  }
+}
+
+/** Disconnect当前DeviceConnect。 */
+export async function disconnectDevice() {
+  try {
+    await deviceStream.drain();
+    setConnected(false);
+  } catch (e) {
+    toast.error(`Disconnect failed: ${e}`);
+  }
+}
+
+/**
+ * 更新Connect状态 UI。
+ * @param {boolean} connected
+ */
+export function setConnected(connected) {
+  state.isConnected = connected;
+  if (!connected) state.connectedDevice = null;
+
+  const statusEl = document.getElementById('connection-status');
+  if (statusEl) statusEl.classList.toggle('connected', connected);
+
+  const textEl = document.getElementById('connection-text');
+  if (textEl) textEl.textContent = connected ? '已Connect' : '未Connect';
+
+  /** @param {string} id @param {boolean} disabled */
+  const setDisabled = (id, disabled) => {
+    const el = /** @type {HTMLButtonElement|HTMLSelectElement|null} */ (document.getElementById(id));
+    if (el) el.disabled = disabled;
+  };
+
+  setDisabled('btn-connect', !connectionReady);
+  setDisabled('device-select', connected);
+  setDisabled('btn-refresh-devices', connected);
+
+  const connectBtn = document.getElementById('btn-connect');
+  const connectLabel = document.getElementById('btn-connect-label');
+  const connectIcon = document.getElementById('btn-connect-icon');
+  if (connectBtn) {
+    connectBtn.title = connected ? 'DisconnectConnect' : 'ConnectDevice';
+    connectBtn.setAttribute('aria-label', connectBtn.title);
+  }
+  if (connectLabel) connectLabel.textContent = connected ? 'Disconnect' : 'Connect';
+  if (connectIcon) {
+    connectIcon.classList.toggle('fi-plug', !connected);
+    connectIcon.classList.toggle('fi-plug-off', connected);
+  }
+
+  refreshRecordButton();
+
+  if (!connected) {
+    state.__markPdDisconnect?.();
+    resetTempForDevice();
+  }
+
+  // Even while recording, disconnect must immediately hide unsupported high-rate options.
+  announceDeviceSelection();
+
+  if (!connected) {
+    const wasRecording = state.isRecording;
+    void stopRecording({ discard: true }).catch(() => {});
+    if (wasRecording) return; // stopRecording 已广播
+  }
+
+  // PD 视图的采集按钮在「Follow Record」开启时就是记录开关，未Connect时要禁用 —— Connect
+  // 状态变化同样要广播（stopRecording 只覆盖「拔Device时正在记录」这一种情况）
+  document.dispatchEvent?.(new CustomEvent('witrn:monitor-changed'));
+}

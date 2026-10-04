@@ -1,0 +1,248 @@
+// @ts-check
+/**
+ * @file 记录实时写入临时Recover文件：每份单次记录（Clear或Import之间的All数据）对应一个缓存文件。
+ *
+ * - Start Recording时，当前这份数据还没有落盘文件就新建一个，写入定宽表头；已有的行
+ *   （例如Import后接着记录）在后台分块补写。
+ * - 追加由数据事件和原生每秒检查点唤醒；回填中也定期回写并同步。
+ * - Pause时写完剩余行、原地回写表头并同步到磁盘；Clear、Import或正常退出时Close并Delete。
+ * - 写入失败会Auto Pause记录：数据仍在内存里，可以手动Export。
+ *
+ * 所有文件操作串在一条队列里，顺序与发生顺序一致。
+ */
+
+import { yieldToMainThread } from './cooperative.js';
+import {
+  formatSpoolHeader,
+  formatSpoolHeaderPatch,
+  nominalIntervalMs,
+  SPOOL_PATCH_BYTES,
+  snapshotCsvColumns,
+} from './csv-codec.js';
+import { formatCsvRangeAsync } from './csv-export.js';
+import { closeWriter, openSpool, patchText, syncFile, writeText } from './file-io.js';
+import { state } from './state.js';
+import { toast } from './ui/toast.js';
+
+/** 两次追加之间至少隔这么久。 */
+const FLUSH_INTERVAL_MS = 1000;
+/** 积压到这么多行时不等计时，立即追加。 */
+const FLUSH_ROWS = 20_000;
+/** 每次写入的行数上限 (~1 MB）。 */
+const ROWS_PER_WRITE = 8192;
+
+/**
+ * @typedef {Object} Spool
+ * @property {number} handle
+ * @property {string} path 临时文件路径，仅用于诊断
+ * @property {import('./state.js').ChartSeriesColumns} columns 本文件对应的那份数据
+ * @property {number} written 已写入的行数
+ * @property {number} startTime 表头 DateTime
+ * @property {number} sampleRate 本文件初始标称间隔，不跟随另一份数据或Settings变化
+ */
+
+/** @type {Spool|null} */
+let spool = null;
+let queue = Promise.resolve();
+let lastFlushAt = 0;
+let drainQueued = false;
+let checkpointDue = false;
+let listenerStarted = false;
+let failureReported = false;
+/** @type {(() => void)|null} */
+let onFailure = null;
+
+function tempSpoolEnabled() {
+  return state.settings.recordingTempSpool !== false && state.settings.autoSaveRecording !== false;
+}
+
+/**
+ * @param {{ onFailure: () => void }} hooks 落盘失败时Pause记录（由 data.js 注入，避免循环依赖）
+ */
+export function configureSpool(hooks) {
+  onFailure = hooks.onFailure;
+  const listen = window.__TAURI__?.event?.listen;
+  if (!listenerStarted && listen) {
+    listenerStarted = true;
+    void listen('spool-checkpoint', (/** @type {{payload:{handle:number,error?:string|null}}} */ event) => {
+      if (event.payload.handle !== spool?.handle) return;
+      if (event.payload.error) {
+        fail(event.payload.error);
+        return;
+      }
+      if (!spool || spool.written >= spool.columns.x.length) return;
+      checkpointDue = true;
+      requestDrain();
+    }).catch(fail);
+  }
+}
+
+/** 当前临时文件路径；没有临时文件时为 null。 */
+export function spoolPath() {
+  return spool?.path ?? null;
+}
+
+/** @param {() => Promise<void>} task */
+function enqueue(task) {
+  const run = queue.then(task);
+  queue = run.catch(() => {});
+  return run;
+}
+
+/** @param {unknown} error */
+function fail(error) {
+  if (failureReported) return;
+  failureReported = true;
+  const failed = spool;
+  spool = null;
+  drainQueued = false;
+  if (failed) void closeWriter(failed.handle).catch(() => {});
+  console.error('临时Recover文件写入失败:', error);
+  toast.error(`临时Recover文件写入失败：${error}。记录已Pause，数据仍在内存中，可手动Export。`);
+  onFailure?.();
+}
+
+function stem() {
+  const model = (state.connectedDevice?.model_name ?? 'WITRN').replace(/^POWER-Z\s+/, '').replace(/\s+/g, '_');
+  const d = new Date();
+  /** @param {number} v */
+  const pad = (v) => String(v).padStart(2, '0');
+  return `${model}_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+/** @param {Spool} target */
+function snapshotOf(target) {
+  return snapshotCsvColumns(target.columns, {
+    withTemp: true,
+    // 表头Fixed带段号列：即使这份数据还没有任何点，也要按同样的列写。
+    recordingSegments: target.columns.recordingSegments,
+    sampleRate: target.sampleRate,
+    startTime: target.startTime,
+  });
+}
+
+/** 把 [written, 当前长度) 的行写进文件，按块让出主线程。 @param {Spool} target */
+async function drain(target) {
+  if (spool !== target || target.written >= target.columns.x.length) return;
+  const snapshot = snapshotOf(target);
+  while (target.written < snapshot.length) {
+    if (spool !== target) return;
+    const to = Math.min(snapshot.length, target.written + ROWS_PER_WRITE);
+    await writeText(target.handle, await formatCsvRangeAsync(snapshot, target.written, to));
+    target.written = to;
+    if (checkpointDue || performance.now() - lastFlushAt >= FLUSH_INTERVAL_MS) await checkpoint(target);
+    if (to < snapshot.length) await yieldToMainThread();
+  }
+}
+
+/** @param {Spool} target */
+async function checkpoint(target) {
+  checkpointDue = false;
+  await patchHeader(target);
+  await syncFile(target.handle);
+  lastFlushAt = performance.now();
+}
+
+function requestDrain() {
+  if (!spool || drainQueued) return;
+  const target = spool;
+  drainQueued = true;
+  void enqueue(async () => {
+    try {
+      if (spool !== target) return;
+      await drain(target);
+      if (spool === target) await checkpoint(target);
+    } finally {
+      drainQueued = false;
+    }
+  })
+    .then(() => {
+      // One subsequent fixed snapshot; never chase a growing tail inside this drain.
+      if (spool === target && (checkpointDue || target.columns.x.length - target.written >= FLUSH_ROWS)) requestDrain();
+    })
+    .catch(fail);
+}
+
+/** 把行数、总时长、采样间隔原地写回表头。 @param {Spool} target */
+async function patchHeader(target) {
+  const lastX = target.written > 0 ? target.columns.x.valueAt(target.written - 1) : Number.NaN;
+  const sampleRate = nominalIntervalMs(target.columns, target.sampleRate);
+  const patch = formatSpoolHeaderPatch({ length: target.written, lastX, sampleRate });
+  await patchText(target.handle, 0, patch);
+}
+
+/** Start Recording：当前这份数据还没有落盘文件时新建一个，并补写已有的行。 */
+export function spoolRecordingStarted() {
+  if (!tempSpoolEnabled()) return;
+  const columns = state.chartSeries;
+  if (spool?.columns === columns) return;
+  void enqueue(async () => {
+    if (spool && spool.columns !== columns) await finish(spool);
+    if (spool?.columns === columns || columns !== state.chartSeries || !tempSpoolEnabled()) return;
+    failureReported = false;
+    const startTime = state.lastRecordingStartTime ?? columns.timestamps.at(0) ?? Date.now();
+    const sampleRate = nominalIntervalMs(columns, state.dataIntervalMs ?? state.settings.sampleRate);
+    const header = formatSpoolHeader({
+      length: 0,
+      lastX: Number.NaN,
+      sampleRate,
+      startTime,
+    });
+    const file = await openSpool(stem(), SPOOL_PATCH_BYTES);
+    const target = { handle: file.handle, path: file.path, columns, written: 0, startTime, sampleRate };
+    spool = target;
+    await writeText(target.handle, header);
+    await syncFile(target.handle);
+    lastFlushAt = performance.now();
+    await drain(target);
+    await checkpoint(target);
+  }).catch(fail);
+}
+
+/** 记录了新点：满 1 sec或积压足够多时安排一次追加。 */
+export function spoolRowsAppended() {
+  const target = spool;
+  if (!target || drainQueued) return;
+  const now = performance.now();
+  if (now - lastFlushAt < FLUSH_INTERVAL_MS && target.columns.x.length - target.written < FLUSH_ROWS) return;
+  requestDrain();
+}
+
+/**
+ * Pause：写完剩余行、回写表头并同步到磁盘，文件保持Open以便Continue记录。
+ * 排在队列里执行：刚Start Recording就Pause时，文件可能还在Open中。
+ */
+export function spoolRecordingPaused() {
+  return enqueue(async () => {
+    const target = spool;
+    if (!target) return;
+    await drain(target);
+    await checkpoint(target);
+  }).catch(fail);
+}
+
+/** @param {Spool} target */
+async function finish(target) {
+  try {
+    await drain(target);
+    await patchHeader(target);
+    // A clean end removes the cache file. If this fails, the backend leaves it in place
+    // so the next startup can offer recovery instead of silently losing the data.
+    await closeWriter(target.handle, { sync: true, removeOnSuccess: true });
+  } catch (error) {
+    await closeWriter(target.handle).catch(() => {});
+    throw error;
+  } finally {
+    if (spool === target) spool = null;
+  }
+}
+
+/**
+ * 收尾当前临时文件（Clear、Import、Close临时Recover或退出时）。
+ * 返回的 Promise 在文件Close后完成，失败时同样Hint并Pause记录。
+ */
+export function finalizeSpool() {
+  return enqueue(async () => {
+    if (spool) await finish(spool);
+  }).catch(fail);
+}
